@@ -4,6 +4,7 @@
 #include <Adafruit_Fingerprint.h>
 #include <SoftwareSerial.h>
 #include <dht.h>
+#include <Arduino.h>
 
 //ultrasonic
 #define trig 9
@@ -25,43 +26,42 @@ SoftwareSerial SIM900 (7,8); //RX,TX
 //temperatue Sensor
 dht temp;
 
+//===================== Global Variables ==============================
 int count = 0;
 double temperature;
 String name;
 String date;
 String time;
-
-
+long disCm;
+bool isValid = false;
+int i = 0;
 
 void setup() {
 
-  Serial.begin(9600);
-
-  //============================== GSM =================================================
+  //GSM
   SIM900.begin(9600);
 
-  //============================== LCD =================================================
+  //LCD
   lcd.init();
   lcd.begin(20, 4);
   lcd.backlight();
 
-  //=============================== RTC ================================================
+  //RTC
   rtc.begin();
+
   //Initialize Time
-  rtc.setDOW(FRIDAY);
-  rtc.setDate(01, 7, 2023);
-  rtc.setTime(13,50,35);
+  // rtc.setDate(20, 7, 2023);
+  // rtc.setTime(22,40,20);
 
-  //=================================== Relay ==========================================
+  //Relay 
   pinMode(4, OUTPUT);
-
   digitalWrite(4,HIGH);
-  
+    
   //ultrasonic
   pinMode(trig , OUTPUT);
   pinMode(echo , INPUT);
 
-  //===================== pin:11 for fans & pin:12 for cooling module ===================
+  //pin:11 for fans & pin:12 for cooling module
   pinMode(11,OUTPUT);  
   pinMode(12,OUTPUT);  
 
@@ -70,74 +70,45 @@ void setup() {
   pinMode(A1, OUTPUT);
   pinMode(A2, OUTPUT);  
 
-  //=================================== Fingerprint ======================================
+  //Fingerprint detect test
   while (!Serial); 
   delay(100);
-  Serial.println("\n\nAdafruit finger detect test");
 
   // set the data rate for the sensor serial port
   finger.begin(57600);
   delay(5);
   if (finger.verifyPassword()) {
-    Serial.println("Found fingerprint sensor!");
   } else {
-    Serial.println("Did not find fingerprint sensor :(");
     while (1) {
        delay(1); 
       }
   }
-
-  finger.getTemplateCount();
-  Serial.println("Waiting for valid finger...");
-  Serial.print("Sensor contains "); Serial.print(finger.templateCount); Serial.println(" templates");
-
-  //GSM
-  Connect2Server();
+  
 }
 
 void loop() {
 
-  //========================================= RTC ============================================
+  //RTC 
   date = rtc.getDateStr();
   time = rtc.getTimeStr();
   
-  //================================= Temperature Sensor =====================================
-  int val=temp.read22(6);
-  temperature = temp.temperature;
+  //Temperature Sensor
+  temp.read22(6);
+  temperature = temp.temperature - 2;
 
-  lcd.setCursor(0, 0);
-  lcd.print(date);
-  lcd.setCursor(6, 1);
-  lcd.print(time);
-  lcd.setCursor(14, 0);
-  lcd.print(temperature);
-  lcd.print("C");
+  //LCD 
+  LCD(date, time, temperature);
 
+  //fingerprint
   getFingerprintIDez();
   delay(50);
 
-  
-  if(temperature > 30){
-    //LED
-      digitalWrite(A0, HIGH);   
-      digitalWrite(A1, LOW);
+  //Ultrasonic 
 
-      digitalWrite(12,HIGH);  //cooling module on:
-      digitalWrite(11,HIGH); //fans on:
 
-  }
-  else{
-    //LED
-      digitalWrite(A1,HIGH);
-      digitalWrite(A0, LOW);  
-         
-      digitalWrite(12,LOW); //cooling module off:
-      //fans on 5s for cool heatsinks:
-      delay(5000);
-      digitalWrite(11,LOW); //fans off:
-            
-  }
-  
+  //Peltier Module
+  coolingSystem(temperature);
+
 }
 
 // returns -1 if failed, otherwise returns ID #
@@ -153,12 +124,11 @@ int getFingerprintIDez() {
 
   p = finger.fingerFastSearch();
   if (p != FINGERPRINT_OK){
-    Serial.println("Error!!! No Record Found");
+
     lcd.clear();
     lcd.setCursor(1, 1);
-    lcd.print("Invalid Fingerprint");
-    lcd.setCursor(5, 2);          
-    delay(2000);
+    lcd.print("Invalid Fingerprint");     
+    delay(1200);
     lcd.clear();    
 
     //If fingerprint doesn't match; sounds a buzzer and allows to re-insert upto 3 times
@@ -169,41 +139,45 @@ int getFingerprintIDez() {
       delay(100);
     }
     delay(2000);
+    
     count++;
 
+    if (isValid == true){
+      count = 0;
+    }
+    
     if(count == 3){
-      Serial.println("Maximum Attempts Exceeded!");
       lcd.clear();
       lcd.setCursor(1, 1);
       lcd.print("Try Again in 30s!"); 
     
-      delay(30000);
-      lcd.clear();    
+      delay(25000);
+          
       count=0;
     
-      // message to security  
-      SendMessage("+94771773680",("Unauthorized Access!"));
-      if (SIM900.available() > 0)
-        Serial.write(SIM900.read());
-        delay(1000);
-      // message to pharmacy incharge
+      //Message to Security
       SendMessage("+94776044674",("Unauthorized Access!"));  
       if (SIM900.available() > 0)
-        Serial.write(SIM900.read());   
+        Serial.write(SIM900.read());
+
+      delay(5000);
+
+      //Message to Pharmacy-in-Charge 
+      SendMessage("+94771773680",("Unauthorized Access!")); //94771773680 94771084473
+      if (SIM900.available() > 0)
+        Serial.write(SIM900.read());
+
+      lcd.clear();
     }
 
     while (!finger.getImage());
     return -1;
   }
 
-  // found a match!
-  Serial.print("Found ID #"); Serial.print(finger.fingerID);
-  Serial.print(" with confidence of "); Serial.println(finger.confidence);
+  //================================== found a match!===================================================
 
   int fingerPrintId = finger.fingerID;
-
-  //GSM
-  Field1(String(fingerPrintId));
+  isValid = true;
 
   switch(fingerPrintId){
     case 1:
@@ -216,18 +190,13 @@ int getFingerprintIDez() {
       name = "Wethma";
       break;
     case 4:
-      name = "Dinuka";
+      name = "Jithmi";
       break;
     case 5:
-      name = "Jithmi";
+      name = "Dinuka";
       break;
   }
 
-  Field2(name);
-
-  Field3(date);
-  Field4(time);
-  Field5(String(temperature));
 
   //LED on
   digitalWrite(A2, HIGH);
@@ -239,10 +208,12 @@ int getFingerprintIDez() {
   lcd.print("Fingerprint Verified");
   lcd.setCursor(5, 2);
   lcd.print("Thank You!");
-  
 
-  //Unlock
+  //Unlock 
   digitalWrite(4, LOW);
+  SendMessage("+94776044674",("Door is Opened by " + name).c_str());
+  if (SIM900.available() > 0)
+    SIM900.read(); 
 
   delay(2000);
 
@@ -255,22 +226,26 @@ int getFingerprintIDez() {
   delay(2000);
   digitalWrite(4,HIGH);
   
-  //Ultrasonic
-  distance(name);
+  // //Ultrasonic
+  while(true){
+    distance();
+      if(isValid==true && disCm <16){
+      SendMessage("+94776044674",("Door is Closed"));
+       if (SIM900.available() > 0)
+        Serial.write(SIM900.read()); 
+    
+     
+      }
+  } 
+   
  
-
-  //GSM
-  EndConnection();
-  
-
   while(!finger.getImage());
-
-  return finger.fingerID;
+  return fingerPrintId;
   
 }
 
-//========================== Ultarsonic =====================================================
- void distance(String name){
+//========================== Ultarsonic =====================================
+ int distance(){
   digitalWrite(trig , LOW);
   delayMicroseconds(2);
   digitalWrite(trig , HIGH);
@@ -279,19 +254,15 @@ int getFingerprintIDez() {
 
   long time = pulseIn(echo, HIGH);
 
-  long disCm = time * 0.034 / 2;  
+  disCm = time * 0.034 / 2;  
   
-  if(disCm > 16){
-    Serial.print("Door Opened ");
-    Serial.println(disCm);
-    SendMessage("+94776044674",("Door is Opened by Mr " + name).c_str());
-    ShowSerialData();
+  if(isValid==true && disCm <16){
+    SendMessage("+94776044674",("Door is Closed"));
+    if (SIM900.available() > 0)
+      Serial.write(SIM900.read()); 
     
-  }
-  else{
-    Serial.print("Door Closed ");
-    Serial.println(disCm);
-  }
+  } 
+  return disCm;
 }
 
 //==========================GSM Function=====================================================
@@ -309,128 +280,44 @@ void SendMessage(const char* recipient, const char* message){
   delay(100);
 }
 
-void Connect2Server(){
+//================================== Peltier Module ====================================
+void coolingSystem(double temperature){
+  if(temperature > 28){
+    //LED
+    digitalWrite(A0, HIGH);   
+    digitalWrite(A1, LOW);
 
-  SIM900.println("AT");
-  delay(200);
+    //Cooling Module On
+    digitalWrite(12,HIGH); 
+    //Fans On 
+    digitalWrite(11,HIGH); 
 
-  SIM900.println("AT+CPIN");
-  delay(200);
+  }
+  else{
+    //LED 
+    digitalWrite(A1,HIGH);
+    digitalWrite(A0, LOW);  
 
-  SIM900.println("AT+CREG?");
-  delay(200);
+    //Cooling Module Off   
+    digitalWrite(12,LOW); 
+    //Fans On 5s for Cool Heatsinks
+    //delay(10000);
+    
+    //Fans Off
+    digitalWrite(11,LOW); 
+            
+  }
 
-  SIM900.println("AT+CGATT?");
-  delay(200);
-
-  SIM900.println("AT+CIPSHUT");
-  delay(200);
-
-  SIM900.println("AT+CIPSTATUS");
-  delay(200);
-
-  SIM900.println("AT+CIPMUX=0");
-  delay(200);
-  ShowSerialData();
-
-  SIM900.println("AT+CSTT=\"internet\"");
-  delay(200);
-  ShowSerialData();
-
-  SIM900.println("AT+CIICR");
-  delay(200);
-  ShowSerialData();
-
-  SIM900.println("AT+CIFSR");
-  delay(200);
-  ShowSerialData();
-
-  SIM900.println("AT+CIPSPRT=0");
-  delay(100);
-  ShowSerialData();
-
-  SIM900.println("AT+CIPSTART=\"TCP\",\"api.thingspeak.com\",\"80\"");
-  delay(200);
-  ShowSerialData();
-
-  SIM900.println("AT+CIPSEND");
-  delay(200);
-  ShowSerialData();
 }
 
-void Field1(String data){
-  String str = "GET https://api.thingspeak.com/update?api_key=0ZIM50LG3KMK87O0&field1=" + String(data);
-  SIM900.println(str);
+//================================= LCD ==========================================
+void LCD(String date, String time, double temperature){
 
-  delay(1000);
-  ShowSerialData();
-  SIM900.println((char)26);
-  delay(2000);
-  SIM900.println();
-
-  ShowSerialData();
+  lcd.setCursor(0, 0);
+  lcd.print(date);
+  lcd.setCursor(6, 1);
+  lcd.print(time);
+  lcd.setCursor(14, 0);
+  lcd.print(temperature);
+  lcd.print("C");
 }
-
-void Field2(String data){
-  String str = "GET https://api.thingspeak.com/update?api_key=0ZIM50LG3KMK87O0&field2=" + String(data);
-  SIM900.println(str);
-
-  delay(1000);
-  ShowSerialData();
-  SIM900.println((char)26);
-  delay(2000);
-  SIM900.println();
-
-  ShowSerialData();
-}
-
-void Field3(String data){
-  String str = "GET https://api.thingspeak.com/update?api_key=0ZIM50LG3KMK87O0&field3=" + String(data);
-  SIM900.println(str);
-
-  delay(1000);
-  ShowSerialData();
-  SIM900.println((char)26);
-  delay(2000);
-  SIM900.println();
-
-  ShowSerialData();
-}
-
-void Field4(String data){
-  String str = "GET https://api.thingspeak.com/update?api_key=0ZIM50LG3KMK87O0&field4=" + String(data);
-  SIM900.println(str);
-
-  delay(1000);
-  ShowSerialData();
-  SIM900.println((char)26);
-  delay(2000);
-  SIM900.println();
-
-  ShowSerialData();
-}
-
-void Field5(String data){
-  String str = "GET https://api.thingspeak.com/update?api_key=0ZIM50LG3KMK87O0&field5=" + String(data);
-  SIM900.println(str);
-
-  delay(1000);
-  ShowSerialData();
-  SIM900.println((char)26);
-  delay(2000);
-  SIM900.println();
-
-  ShowSerialData();
-}
-
-void EndConnection(){
-  SIM900.println("AT+CIPSHUT");
-  delay(1000);
-  ShowSerialData();
-}
-
-void ShowSerialData(){
-  while(SIM900.available()!=0)
-    Serial.write(SIM900.read());
-}
-
